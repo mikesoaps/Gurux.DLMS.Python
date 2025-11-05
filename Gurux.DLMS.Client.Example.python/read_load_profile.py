@@ -100,6 +100,12 @@ class LoadProfileReader:
             if ret != 0:
                 return
             
+            # Check if user wants to override output filename via -o parameter
+            if settings.outputFile:
+                # Use the output file parameter if specified, but change extension to .txt
+                base_name = os.path.splitext(settings.outputFile)[0]
+                output_filename = base_name + "_load_profile.txt"
+            
             # //////////////////////////////////////
             #  Initialize connection settings.
             if not isinstance(settings.media, (GXSerial, GXNet)):
@@ -126,6 +132,10 @@ class LoadProfileReader:
             print("Reading capture objects...")
             reader.read(profile, 3)
             
+            print("Capture objects:")
+            for i, (obj, attr) in enumerate(profile.captureObjects):
+                print(f"  Column {i}: {obj.logicalName} - {obj.name} (Attribute {attr})")
+            
             # Calculate date range for last 31 days
             end_date = datetime.datetime.now()
             start_date = end_date - datetime.timedelta(days=31)
@@ -133,7 +143,8 @@ class LoadProfileReader:
             print(f"Reading load profile data from {start_date} to {end_date}...")
             
             # Read load profile data by date range
-            rows = reader.readRowsByRange(profile, start_date, end_date)
+            # The C# code uses ReadRowsByRange which adds 1 day to the end date
+            rows = reader.readRowsByRange(profile, start_date, end_date + datetime.timedelta(days=1))
             
             # Write results to file
             print(f"Writing results to {output_filename}...")
@@ -141,8 +152,16 @@ class LoadProfileReader:
                 # Write header
                 f.write("Landis and Gyr Load Profile Data\n")
                 f.write("=" * 80 + "\n")
+                f.write(f"Generated: {datetime.datetime.now()}\n")
                 f.write(f"Date Range: {start_date} to {end_date}\n")
                 f.write(f"Total Rows: {len(rows) if rows else 0}\n")
+                f.write(f"Client Address: {settings.client.clientAddress}\n")
+                f.write(f"Server Address: {settings.client.serverAddress}\n")
+                f.write(f"Authentication: {settings.client.authentication}\n")
+                if isinstance(settings.media, GXNet):
+                    f.write(f"Connection: TCP/IP {settings.media.hostName}:{settings.media.port}\n")
+                elif isinstance(settings.media, GXSerial):
+                    f.write(f"Connection: Serial {settings.media.port}\n")
                 f.write("=" * 80 + "\n\n")
                 
                 # Write column headers
@@ -154,6 +173,9 @@ class LoadProfileReader:
                 
                 # Write data rows
                 if rows:
+                    last_datetime = datetime.datetime(1970, 1, 1)
+                    interval_minutes = 30  # Default load profile interval
+                    
                     for row in rows:
                         row_str = ""
                         for i, cell in enumerate(row):
@@ -161,27 +183,38 @@ class LoadProfileReader:
                                 row_str += " | "
                             
                             # Handle different data types
-                            if isinstance(cell, bytearray):
-                                # This is likely a date/time
-                                try:
-                                    dt = GXDLMSClient.changeType(cell, DataType.DATETIME)
-                                    if isinstance(dt, GXDateTime):
-                                        row_str += str(dt.value)
-                                    else:
+                            # First column is typically the datetime
+                            if i == 0:
+                                if cell is None:
+                                    # If datetime is NULL, increment from last datetime
+                                    # This matches the C# code behavior
+                                    last_datetime = last_datetime + datetime.timedelta(minutes=interval_minutes)
+                                    row_str += str(last_datetime)
+                                elif isinstance(cell, (bytearray, bytes)):
+                                    try:
+                                        dt = GXDLMSClient.changeType(cell, DataType.DATETIME)
+                                        if isinstance(dt, GXDateTime):
+                                            last_datetime = dt.value
+                                            row_str += str(dt.value)
+                                        else:
+                                            row_str += GXByteBuffer.hex(cell)
+                                    except Exception:
                                         row_str += GXByteBuffer.hex(cell)
-                                except:
-                                    row_str += GXByteBuffer.hex(cell)
-                            elif isinstance(cell, bytes):
-                                try:
-                                    dt = GXDLMSClient.changeType(cell, DataType.DATETIME)
-                                    if isinstance(dt, GXDateTime):
-                                        row_str += str(dt.value)
+                                elif isinstance(cell, (datetime.datetime, GXDateTime)):
+                                    if isinstance(cell, GXDateTime):
+                                        last_datetime = cell.value
+                                        row_str += str(cell.value)
                                     else:
-                                        row_str += GXByteBuffer.hex(cell)
-                                except:
-                                    row_str += GXByteBuffer.hex(cell)
+                                        last_datetime = cell
+                                        row_str += str(cell)
+                                else:
+                                    row_str += str(cell)
                             else:
-                                row_str += str(cell)
+                                # For other columns, just convert to string
+                                if isinstance(cell, (bytearray, bytes)):
+                                    row_str += GXByteBuffer.hex(cell)
+                                else:
+                                    row_str += str(cell)
                         
                         f.write(row_str + "\n")
                     
