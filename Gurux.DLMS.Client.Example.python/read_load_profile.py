@@ -38,13 +38,11 @@ import datetime
 import gurux_dlms
 from gurux_serial import GXSerial
 from gurux_net import GXNet
-from gurux_dlms.enums import ObjectType, DataType
-from gurux_dlms.objects.GXDLMSObjectCollection import GXDLMSObjectCollection
+from gurux_dlms.enums import DataType
 from gurux_dlms.objects import GXDLMSProfileGeneric
 from gurux_dlms import GXDateTime, GXByteBuffer
 from GXSettings import GXSettings
 from GXDLMSReader import GXDLMSReader
-import locale
 from gurux_dlms import (
     GXDLMSException,
     GXDLMSExceptionResponse,
@@ -64,6 +62,11 @@ except Exception:
 
 
 # pylint: disable=too-few-public-methods,broad-except
+# Constants
+DEFAULT_INTERVAL_SECONDS = 1800  # 30 minutes default interval
+EPOCH_START = datetime.datetime(1970, 1, 1)  # Epoch start for NULL datetime handling
+
+
 class LoadProfileReader:
     @classmethod
     def main(cls, args):
@@ -147,14 +150,14 @@ class LoadProfileReader:
             rows = reader.readRowsByRange(profile, start_date, end_date + datetime.timedelta(days=1))
 
             # Try to read the capture period (attribute 4) to determine the interval
-            interval_seconds = 1800  # Default to 30 minutes
+            interval_seconds = DEFAULT_INTERVAL_SECONDS
             try:
                 capture_period = reader.read(profile, 4)
                 if capture_period:
                     interval_seconds = capture_period
                     print(f"Capture period: {interval_seconds} seconds")
             except Exception as ex:
-                print(f"Could not read capture period, using default 30 minutes: {ex}")
+                print(f"Could not read capture period, using default {DEFAULT_INTERVAL_SECONDS} seconds: {ex}")
 
             # Write results to file
             print(f"Writing results to {output_filename}...")
@@ -183,7 +186,7 @@ class LoadProfileReader:
 
                 # Write data rows
                 if rows:
-                    last_datetime = datetime.datetime(1970, 1, 1)
+                    last_datetime = EPOCH_START
                     interval_minutes = interval_seconds // 60  # Convert seconds to minutes
 
                     for row in rows:
