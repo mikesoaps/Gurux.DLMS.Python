@@ -156,14 +156,10 @@ class LoadProfileReader:
             # Ensure start is aligned to 30-minute interval
             if start_date.minute % 30 != 0:
                 start_date = start_date.replace(minute=(start_date.minute // 30) * 30)
-            # End at midnight today
-            end_date = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+            # End at midnight today (00:00:00)
+            end_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
             print(f"Reading load profile data from {start_date} to {end_date}...")
-
-            # Read load profile data by date range
-            # The C# code uses ReadRowsByRange which adds 1 day to the end date
-            rows = reader.readRowsByRange(profile, start_date, end_date + datetime.timedelta(days=1))
 
             # Try to read the capture period (attribute 4) to determine the interval
             interval_seconds = DEFAULT_INTERVAL_SECONDS
@@ -183,7 +179,6 @@ class LoadProfileReader:
                 f.write("=" * 80 + "\n")
                 f.write(f"Generated: {datetime.datetime.now()}\n")
                 f.write(f"Date Range: {start_date} to {end_date}\n")
-                f.write(f"Total Rows: {len(rows) if rows else 0}\n")
                 f.write(f"Client Address: {settings.client.clientAddress}\n")
                 f.write(f"Server Address: {settings.client.serverAddress}\n")
                 f.write(f"Authentication: {settings.client.authentication}\n")
@@ -200,66 +195,96 @@ class LoadProfileReader:
                     f.write(header + "\n")
                     f.write("-" * len(header) + "\n")
 
-                # Write data rows
-                if rows:
-                    # Initialize with start_date for more realistic NULL datetime handling
-                    last_datetime = start_date
-                    interval_minutes = interval_seconds // 60  # Convert seconds to minutes
+                # Read data day by day to avoid overloading meters with 1-minute intervals
+                total_rows = 0
+                last_datetime = start_date
+                interval_minutes = interval_seconds // 60  # Convert seconds to minutes
+                
+                print("\nLoad Profile Data:")
+                print("=" * 80)
+                
+                # Calculate number of days to read
+                current_date = start_date
+                day_count = 0
+                
+                while current_date < end_date:
+                    # Read one day at a time
+                    day_start = current_date
+                    day_end = current_date + datetime.timedelta(days=1)
+                    
+                    # Don't exceed the overall end date
+                    if day_end > end_date:
+                        day_end = end_date
+                    
+                    day_count += 1
+                    print(f"\nReading day {day_count}: {day_start} to {day_end}")
+                    
+                    try:
+                        # Read load profile data for this day
+                        rows = reader.readRowsByRange(profile, day_start, day_end)
+                        
+                        if rows:
+                            print(f"  Retrieved {len(rows)} entries for this day")
+                            for row in rows:
+                                row_str = ""
+                                for i, cell in enumerate(row):
+                                    if row_str:
+                                        row_str += " | "
 
-                    print("\nLoad Profile Data:")
-                    print("=" * 80)
-                    for row_num, row in enumerate(rows, 1):
-                        row_str = ""
-                        for i, cell in enumerate(row):
-                            if row_str:
-                                row_str += " | "
-
-                            # Handle different data types
-                            # First column is typically the datetime
-                            if i == 0:
-                                if cell is None:
-                                    # If datetime is NULL, increment from last datetime
-                                    # This matches the C# code behavior
-                                    last_datetime = last_datetime + datetime.timedelta(minutes=interval_minutes)
-                                    row_str += str(last_datetime)
-                                elif isinstance(cell, (bytearray, bytes)):
-                                    try:
-                                        dt = GXDLMSClient.changeType(cell, DataType.DATETIME)
-                                        if isinstance(dt, GXDateTime):
-                                            last_datetime = dt.value
-                                            row_str += str(dt.value)
+                                    # Handle different data types
+                                    # First column is typically the datetime
+                                    if i == 0:
+                                        if cell is None:
+                                            # If datetime is NULL, increment from last datetime
+                                            # This matches the C# code behavior
+                                            last_datetime = last_datetime + datetime.timedelta(minutes=interval_minutes)
+                                            row_str += str(last_datetime)
+                                        elif isinstance(cell, (bytearray, bytes)):
+                                            try:
+                                                dt = GXDLMSClient.changeType(cell, DataType.DATETIME)
+                                                if isinstance(dt, GXDateTime):
+                                                    last_datetime = dt.value
+                                                    row_str += str(dt.value)
+                                                else:
+                                                    row_str += GXByteBuffer.hex(cell)
+                                            except Exception:
+                                                row_str += GXByteBuffer.hex(cell)
+                                        elif isinstance(cell, (datetime.datetime, GXDateTime)):
+                                            if isinstance(cell, GXDateTime):
+                                                last_datetime = cell.value
+                                                row_str += str(cell.value)
+                                            else:
+                                                last_datetime = cell
+                                                row_str += str(cell)
                                         else:
-                                            row_str += GXByteBuffer.hex(cell)
-                                    except Exception:
-                                        row_str += GXByteBuffer.hex(cell)
-                                elif isinstance(cell, (datetime.datetime, GXDateTime)):
-                                    if isinstance(cell, GXDateTime):
-                                        last_datetime = cell.value
-                                        row_str += str(cell.value)
+                                            row_str += str(cell)
                                     else:
-                                        last_datetime = cell
-                                        row_str += str(cell)
-                                else:
-                                    row_str += str(cell)
-                            else:
-                                # For other columns, just convert to string
-                                if isinstance(cell, (bytearray, bytes)):
-                                    row_str += GXByteBuffer.hex(cell)
-                                else:
-                                    row_str += str(cell)
+                                        # For other columns, just convert to string
+                                        if isinstance(cell, (bytearray, bytes)):
+                                            row_str += GXByteBuffer.hex(cell)
+                                        else:
+                                            row_str += str(cell)
 
-                        # Print row to console as it's processed
-                        print(f"Row {row_num}: {row_str}")
-                        # Write to file
-                        f.write(row_str + "\n")
+                                # Print row to console as it's processed
+                                total_rows += 1
+                                print(f"Row {total_rows}: {row_str}")
+                                # Write to file
+                                f.write(row_str + "\n")
+                        else:
+                            print(f"  No data for this day")
+                    
+                    except Exception as ex:
+                        print(f"  Error reading day {day_count}: {ex}")
+                        f.write(f"# Error reading data for {day_start}: {ex}\n")
+                    
+                    # Move to next day
+                    current_date = day_end
 
-                    f.write("\n" + "=" * 80 + "\n")
-                    f.write(f"Successfully retrieved {len(rows)} load profile entries.\n")
-                else:
-                    f.write("No data retrieved.\n")
+                f.write("\n" + "=" * 80 + "\n")
+                f.write(f"Successfully retrieved {total_rows} load profile entries total.\n")
 
-            print(f"Load profile data successfully written to {output_filename}")
-            print(f"Total entries: {len(rows) if rows else 0}")
+            print(f"\nLoad profile data successfully written to {output_filename}")
+            print(f"Total entries: {total_rows}")
 
         except (
             ValueError,
