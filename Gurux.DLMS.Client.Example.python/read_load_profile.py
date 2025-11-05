@@ -88,29 +88,29 @@ class LoadProfileReader:
         except Exception:
             # It's OK if this fails.
             print("pkg_resources not found")
-        
+
         reader = None
         settings = GXSettings()
         output_filename = "load_profile_data.txt"
-        
+
         try:
             # //////////////////////////////////////
             #  Handle command line parameters.
             ret = settings.getParameters(args)
             if ret != 0:
                 return
-            
+
             # Check if user wants to override output filename via -o parameter
             if settings.outputFile:
                 # Use the output file parameter if specified, but change extension to .txt
                 base_name = os.path.splitext(settings.outputFile)[0]
                 output_filename = base_name + "_load_profile.txt"
-            
+
             # //////////////////////////////////////
             #  Initialize connection settings.
             if not isinstance(settings.media, (GXSerial, GXNet)):
                 raise Exception("Unknown media type.")
-            
+
             # //////////////////////////////////////
             reader = GXDLMSReader(
                 settings.client,
@@ -119,33 +119,43 @@ class LoadProfileReader:
                 settings.invocationCounter,
             )
             settings.media.open()
-            
+
             # Initialize connection
             print("Initializing connection to Landis and Gyr meter...")
             reader.initializeConnection()
-            
+
             # Get the load profile object (1.0.99.1.0.255 is the standard LN for load profile)
             print("Reading load profile object...")
             profile = GXDLMSProfileGeneric("1.0.99.1.0.255")
-            
+
             # Read capture objects (column definitions)
             print("Reading capture objects...")
             reader.read(profile, 3)
-            
+
             print("Capture objects:")
             for i, (obj, attr) in enumerate(profile.captureObjects):
                 print(f"  Column {i}: {obj.logicalName} - {obj.name} (Attribute {attr})")
-            
+
             # Calculate date range for last 31 days
             end_date = datetime.datetime.now()
             start_date = end_date - datetime.timedelta(days=31)
-            
+
             print(f"Reading load profile data from {start_date} to {end_date}...")
-            
+
             # Read load profile data by date range
             # The C# code uses ReadRowsByRange which adds 1 day to the end date
             rows = reader.readRowsByRange(profile, start_date, end_date + datetime.timedelta(days=1))
-            
+
+            # Try to read the capture period (attribute 4) to determine the interval
+            interval_seconds = 1800  # Default to 30 minutes
+            try:
+                capture_period = reader.read(profile, 4)
+                if capture_period:
+                    interval_seconds = capture_period
+                    print(f"Capture period: {interval_seconds} seconds")
+            except Exception as ex:
+                print(f"Could not read capture period, using default 30 minutes: {ex}")
+
             # Write results to file
             print(f"Writing results to {output_filename}...")
             with open(output_filename, 'w') as f:
@@ -163,25 +173,25 @@ class LoadProfileReader:
                 elif isinstance(settings.media, GXSerial):
                     f.write(f"Connection: Serial {settings.media.port}\n")
                 f.write("=" * 80 + "\n\n")
-                
+
                 # Write column headers
                 if profile.captureObjects:
-                    header = " | ".join([f"{obj.name} ({obj.logicalName})" 
+                    header = " | ".join([f"{obj.name} ({obj.logicalName})"
                                         for obj, attr in profile.captureObjects])
                     f.write(header + "\n")
                     f.write("-" * len(header) + "\n")
-                
+
                 # Write data rows
                 if rows:
                     last_datetime = datetime.datetime(1970, 1, 1)
-                    interval_minutes = 30  # Default load profile interval
-                    
+                    interval_minutes = interval_seconds // 60  # Convert seconds to minutes
+
                     for row in rows:
                         row_str = ""
                         for i, cell in enumerate(row):
                             if row_str:
                                 row_str += " | "
-                            
+
                             # Handle different data types
                             # First column is typically the datetime
                             if i == 0:
@@ -215,17 +225,17 @@ class LoadProfileReader:
                                     row_str += GXByteBuffer.hex(cell)
                                 else:
                                     row_str += str(cell)
-                        
+
                         f.write(row_str + "\n")
-                    
+
                     f.write("\n" + "=" * 80 + "\n")
                     f.write(f"Successfully retrieved {len(rows)} load profile entries.\n")
                 else:
                     f.write("No data retrieved.\n")
-            
+
             print(f"Load profile data successfully written to {output_filename}")
             print(f"Total entries: {len(rows) if rows else 0}")
-            
+
         except (
             ValueError,
             GXDLMSException,
