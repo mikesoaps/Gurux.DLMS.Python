@@ -38,7 +38,7 @@ import datetime
 import gurux_dlms
 from gurux_serial import GXSerial
 from gurux_net import GXNet
-from gurux_dlms.enums import DataType
+from gurux_dlms.enums import DataType, ObjectType
 from gurux_dlms.objects import GXDLMSProfileGeneric
 from gurux_dlms import GXDateTime, GXByteBuffer
 from GXSettings import GXSettings
@@ -126,9 +126,20 @@ class LoadProfileReader:
             print("Initializing connection to Landis and Gyr meter...")
             reader.initializeConnection()
 
-            # Get the load profile object (1.0.99.1.0.255 is the standard LN for load profile)
-            print("Reading load profile object...")
-            profile = GXDLMSProfileGeneric("1.0.99.1.0.255")
+            # Get association view to populate available objects
+            print("Reading association view...")
+            reader.getAssociationView()
+
+            # Find the load profile object (1.0.99.1.0.255 is the standard LN for load profile)
+            print("Looking for load profile object...")
+            profile = settings.client.objects.findByLN(ObjectType.PROFILE_GENERIC, "1.0.99.1.0.255")
+
+            if profile is None:
+                # If not found in association view, try creating it directly
+                print("Load profile not found in association view, creating object...")
+                profile = GXDLMSProfileGeneric("1.0.99.1.0.255")
+            else:
+                print(f"Found load profile object: {profile.name}")
 
             # Read capture objects (column definitions)
             print("Reading capture objects...")
