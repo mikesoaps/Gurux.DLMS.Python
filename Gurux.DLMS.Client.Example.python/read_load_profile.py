@@ -150,8 +150,14 @@ class LoadProfileReader:
                 print(f"  Column {i}: {obj.logicalName} - {obj.name} (Attribute {attr})")
 
             # Calculate date range for last 31 days
-            end_date = datetime.datetime.now()
-            start_date = end_date - datetime.timedelta(days=31)
+            # Start at midnight 31 days ago, aligned to 30-minute intervals
+            now = datetime.datetime.now()
+            start_date = (now - datetime.timedelta(days=31)).replace(hour=0, minute=0, second=0, microsecond=0)
+            # Ensure start is aligned to 30-minute interval
+            if start_date.minute % 30 != 0:
+                start_date = start_date.replace(minute=(start_date.minute // 30) * 30)
+            # End at midnight today
+            end_date = now.replace(hour=23, minute=59, second=59, microsecond=999999)
 
             print(f"Reading load profile data from {start_date} to {end_date}...")
 
@@ -200,7 +206,9 @@ class LoadProfileReader:
                     last_datetime = start_date
                     interval_minutes = interval_seconds // 60  # Convert seconds to minutes
 
-                    for row in rows:
+                    print("\nLoad Profile Data:")
+                    print("=" * 80)
+                    for row_num, row in enumerate(rows, 1):
                         row_str = ""
                         for i, cell in enumerate(row):
                             if row_str:
@@ -240,6 +248,9 @@ class LoadProfileReader:
                                 else:
                                     row_str += str(cell)
 
+                        # Print row to console as it's processed
+                        print(f"Row {row_num}: {row_str}")
+                        # Write to file
                         f.write(row_str + "\n")
 
                     f.write("\n" + "=" * 80 + "\n")
