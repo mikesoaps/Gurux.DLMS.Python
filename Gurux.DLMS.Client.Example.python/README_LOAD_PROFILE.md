@@ -103,7 +103,9 @@ Required packages:
 
 ## Notes
 
-- The script uses Short Name (SN) referencing by default, which is typical for Landis and Gyr meters
+- The script defaults to Logical Name (LN) referencing. Use `-r sn` for Short Name referencing, which is typical for Landis and Gyr meters
 - For HDLC connections, the default client address is 16 and server address is 1
 - Authentication may be required depending on your meter configuration
 - The load profile columns/captured objects are read from the meter and may vary by meter model
+- The script automatically retrieves data for the last 31 days
+- Load profile interval (15/30/60 minutes) is read dynamically from the meter
